@@ -1,0 +1,203 @@
+### WAF v2 ###
+
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: WAF v2 for Maintenance
+
+Metadata:
+  "AWS::CloudFormation::Interface":
+    ParameterGroups:
+      - Label:
+          default: "MaintenanceMode"
+        Parameters:
+          - MaintenanceMode
+      - Label:
+          default: "ScopeType"
+        Parameters:
+          - ScopeType
+      - Label:
+          default: "WAFWebACLMetricName"
+        Parameters:
+          - WAFWebACLMetricName
+      - Label:
+          default: "CIDR1"
+        Parameters:
+          - CIDR1
+      - Label:
+          default: "CIDR2"
+        Parameters:
+          - CIDR2
+      - Label:
+          default: "CIDR3"
+        Parameters:
+          - CIDR3
+      - Label:
+          default: "CIDR4"
+        Parameters:
+          - CIDR4
+      - Label:
+          default: "CIDR5"
+        Parameters:
+          - CIDR5
+
+# ------------------------------------------------------------#
+# Input Parameters
+# ------------------------------------------------------------#
+Parameters:
+  MaintenanceMode:
+    Type: String
+    AllowedValues: ["on", "off"]
+
+  ScopeType:
+    Type: String
+    AllowedValues: ["CLOUDFRONT", "GRAPHQL", "REST"]
+
+  WAFWebACLMetricName:
+    Type: String
+    MinLength: 1
+    MaxLength: 128
+    AllowedPattern: "[a-zA-Z0-9]*"
+
+  CIDR1:
+    Type: String
+    Description: White List CIDR 1
+    Default: ""
+    AllowedPattern: '^((([1-9]?[0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}[1-9]?([0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])/(8|16|24|32))?$'
+  CIDR2:
+    Type: String
+    Description: White List CIDR 2
+    Default: ""
+    AllowedPattern: '^((([1-9]?[0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}[1-9]?([0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])/(8|16|24|32))?$'
+  CIDR3:
+    Type: String
+    Description: White List CIDR 3
+    Default: ""
+    AllowedPattern: '^((([1-9]?[0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}[1-9]?([0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])/(8|16|24|32))?$'
+  CIDR4:
+    Type: String
+    Description: White List CIDR 4
+    Default: ""
+    AllowedPattern: '^((([1-9]?[0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}[1-9]?([0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])/(8|16|24|32))?$'
+  CIDR5:
+    Type: String
+    Description: White List CIDR 5
+    Default: ""
+    AllowedPattern: '^((([1-9]?[0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}[1-9]?([0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])/(8|16|24|32))?$'
+
+# ------------------------------------------------------------#
+#  Conditions
+# ------------------------------------------------------------#
+Conditions:
+  IsMaintenance: !Equals [!Ref MaintenanceMode, "on"]
+  IsCloudFront: !Equals [!Ref ScopeType, "CLOUDFRONT"]
+  IsGraphql: !Equals [!Ref ScopeType, "GRAPHQL"]
+  IsCIDR1: !Or
+    - !Not [!Equals [!Ref CIDR1, ""]]
+    - !Equals [!Ref CIDR1, ""]
+  IsCIDR2: !Not [!Equals [!Ref CIDR2, ""]]
+  IsCIDR3: !Not [!Equals [!Ref CIDR3, ""]]
+  IsCIDR4: !Not [!Equals [!Ref CIDR4, ""]]
+  IsCIDR5: !Not [!Equals [!Ref CIDR5, ""]]
+
+Resources:
+  # ------------------------------------------------------------#
+  # WAF
+  # ------------------------------------------------------------#
+  WhiteListCIDRSet:
+    Type: AWS::WAFv2::IPSet
+    Properties:
+      Addresses:
+        - !If
+          - IsCIDR1
+          - !Ref CIDR1
+          - !Ref "AWS::NoValue"
+        - !If
+          - IsCIDR2
+          - !Ref CIDR2
+          - !Ref "AWS::NoValue"
+        - !If
+          - IsCIDR3
+          - !Ref CIDR3
+          - !Ref "AWS::NoValue"
+        - !If
+          - IsCIDR4
+          - !Ref CIDR4
+          - !Ref "AWS::NoValue"
+        - !If
+          - IsCIDR5
+          - !Ref CIDR5
+          - !Ref "AWS::NoValue"
+      IPAddressVersion: IPV4
+      Name: Maintenance-WebACL-IPSet
+      Scope: !If
+        - IsCloudFront
+        - "CLOUDFRONT"
+        - "REGIONAL"
+
+  WAFWebACL:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: Maintenance-WebACL
+      CustomResponseBodies: !If
+        - IsMaintenance
+        - !If
+          - IsGraphql
+          - CustomResponseBodyKeyForGraphql:
+              ContentType: APPLICATION_JSON
+              Content: '{"errors": [{"errorType": "MaintenanceMode", "message": "Unable to access during the maintenance."}]}'
+          - !If 
+            - IsCloudFront
+            - !Ref "AWS::NoValue"
+            - CustomResponseBodyKeyForRest:
+                ContentType: APPLICATION_JSON
+                Content: '{"error": {"errorType": "MaintenanceMode", "message": "Unable to access during the maintenance."}}'
+        - !Ref "AWS::NoValue"
+      DefaultAction:
+        Block: !If
+          - IsMaintenance
+          - !If
+            - IsGraphql
+            - CustomResponse:
+                ResponseCode: 200
+                CustomResponseBodyKey: CustomResponseBodyKeyForGraphql
+            - !If
+              - IsCloudFront
+              - CustomResponse:
+                  ResponseCode: 403
+                  ResponseHeaders:
+                    - Name: CustomErrorType
+                      Value: "MaintenanceMode"
+              - CustomResponse:
+                  ResponseCode: 503
+                  CustomResponseBodyKey: CustomResponseBodyKeyForRest
+                  ResponseHeaders:
+                    - Name: CustomErrorType
+                      Value: "MaintenanceMode"
+          - !Ref "AWS::NoValue"
+        Allow: !If
+          - IsMaintenance
+          - !Ref "AWS::NoValue"
+          - {}
+      Scope: !If
+        - IsCloudFront
+        - "CLOUDFRONT"
+        - "REGIONAL"
+      VisibilityConfig:
+        CloudWatchMetricsEnabled: true
+        MetricName: !Ref WAFWebACLMetricName
+        SampledRequestsEnabled: true
+      Rules:
+        - !If
+          - IsMaintenance
+          - Name: !Sub "${PJPrefix}-Maintenance-WebACL-RuleIPSet"
+            Action:
+              Allow: {}
+            Priority: 0
+            Statement:
+              IPSetReferenceStatement:
+                Arn: !GetAtt WhiteListCIDRSet.Arn
+            VisibilityConfig:
+              CloudWatchMetricsEnabled: true
+              MetricName: !Sub "${WAFWebACLMetricName}-RuleIPSet"
+              SampledRequestsEnabled: true
+          - !Ref "AWS::NoValue"
